@@ -18,7 +18,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Run Foxguard
@@ -49,7 +49,7 @@ jobs:
             arch: x86_64
             tier: 2
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: stable
@@ -60,7 +60,7 @@ jobs:
           TOGI_EXPECTED_TARGET: ${{ matrix.target }}
           TOGI_EXPECTED_ARCH: ${{ matrix.arch }}
         run: bash ./.github/scripts/assert-native-target.sh
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
         with:
           cache-bin: false
       - name: Build
@@ -72,7 +72,7 @@ jobs:
     name: MSRV
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: 1.87
@@ -82,7 +82,7 @@ jobs:
           TOGI_EXPECTED_TARGET: x86_64-unknown-linux-gnu
           TOGI_EXPECTED_ARCH: x86_64
         run: bash ./.github/scripts/assert-native-target.sh
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
         with:
           cache-bin: false
       - name: Test
@@ -92,11 +92,11 @@ jobs:
     name: Supply Chain
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Audit Rust dependencies
@@ -108,12 +108,12 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: stable
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
         with:
           cache-bin: false
       - name: Clippy
@@ -125,7 +125,7 @@ jobs:
     name: VS Code Extension
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7
         with:
           node-version: 20
@@ -137,7 +137,7 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: stable
@@ -147,7 +147,7 @@ jobs:
           TOGI_EXPECTED_TARGET: x86_64-unknown-linux-gnu
           TOGI_EXPECTED_ARCH: x86_64
         run: bash ./.github/scripts/assert-native-target.sh
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
         with:
           cache-bin: false
       - uses: actions/setup-go@v7
@@ -167,7 +167,7 @@ jobs:
     name: Dogfood (togi on togi)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
@@ -179,7 +179,7 @@ jobs:
           TOGI_EXPECTED_TARGET: x86_64-unknown-linux-gnu
           TOGI_EXPECTED_ARCH: x86_64
         run: bash ./.github/scripts/assert-native-target.sh
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
         with:
           cache-bin: false
       - name: Build togi
@@ -210,7 +210,7 @@ jobs:
             tier: 2
             name: togi-windows-x86_64
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: stable
@@ -243,7 +243,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
@@ -257,7 +257,7 @@ jobs:
             *.zip
             checksums.txt
       - name: Create Release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
         with:
           files: |
             *.tar.gz
@@ -275,7 +275,7 @@ jobs:
       TOGI_VERSION: ${{ github.ref_name }}
       TOGI_WORKFLOW_HEAD: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Verify tag commit, workflow head, and release association
@@ -315,7 +315,7 @@ jobs:
       TOGI_EXPECTED_ARCHIVE: ${{ matrix.archive }}
       TOGI_EXPECTED_BINARY: ${{ matrix.binary }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-go@v7
