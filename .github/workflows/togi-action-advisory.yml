@@ -25,7 +25,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
         with:
           cache-bin: false
       - name: Fetch fixture dependencies
@@ -33,7 +33,7 @@ jobs:
       - name: Run Togi action (advisory)
         id: togi
         continue-on-error: true
-        uses: Darkroom4364/togi@a1503b2ebac4c63d377b015c4825b97cab25ec68 # v0.4.1 release action source
+        uses: Darkroom4364/togi@e692e2d169b7a717c6b911884e90c0bcd0d133b1 # v0.4.1 release action source
         with:
           version: v0.4.1
           base: origin/${{ github.base_ref }}
