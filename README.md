@@ -26,7 +26,7 @@ Mutation testing is usually too slow to run on every PR. togi is built for the P
 - **Performance controls**: caching, sharding, fail-fast commands, LCOV filtering, and source-line test selection
 - **Guardrails**: build pre-checks, baselines, operator filters, noisy-file skips, and path-safe mutation execution
 
-If a mutation survives, your tests still pass after behavior changed. That is a concrete test gap.
+If a mutation survives, your tests still pass after the edit. Check whether it changes observable behavior: a behavior-changing survivor is a test gap; an equivalent mutation is not.
 
 ```
 $ togi check --base HEAD~1
@@ -40,6 +40,37 @@ Results: 2/3 mutations killed (1 survived)
 Duration: 0.84s
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
+
+## Try a complete test repair
+
+From a Togi source checkout, with Bash, Git, Go, and `jq` installed:
+
+```bash
+bash examples/demo.sh
+```
+
+The script builds this checkout's debug binary (requires Rust), or you can
+supply a trusted build with `TOGI_BIN=/path/to/togi bash examples/demo.sh`.
+This walkthrough requires `replay --verify-killed`, included in
+[v0.6.0](https://github.com/Darkroom4364/togi/releases/tag/v0.6.0).
+After installing the [released binary](#install), use it without a Rust build:
+
+```bash
+TOGI_BIN="$(command -v togi)" bash examples/demo.sh
+```
+
+The demo stages a one-line change to `IsPositive` in a temporary Go project
+and focuses on one boundary mutation: `n > 0` becomes `n >= 0`. The original
+tests pass, but never check zero. It saves the survivor's JSON report, replays
+that exact mutation, and confirms the unchanged tests cannot verify a repair.
+It then adds an assertion that `IsPositive(0)` is false and runs
+`togi replay <id> --report <report.json> --verify-killed` successfully.
+
+Success ends with `Demo complete: the added test kills the recorded boundary
+mutation.` The source fixture is unchanged, and the temporary project/report
+are removed. This demonstrates one repaired gap, not complete test adequacy;
+see the [verification contract](#example-finding-real-test-gaps) before using
+the same loop in your own project.
 
 ## Why
 
@@ -89,7 +120,7 @@ with a parent commit and at least one changed supported source line.
 ```bash
 (
   set -euo pipefail
-  TOGI_VERSION=v0.5.2
+  TOGI_VERSION=v0.6.0
   TOGI_ARCHIVE=togi-linux-x86_64.tar.gz
   RELEASE_BASE="https://github.com/Darkroom4364/togi/releases/download/${TOGI_VERSION}"
   TEMP_DIR="$(mktemp -d)"
@@ -199,6 +230,9 @@ togi explain 1 --report togi-report.json
 
 # Force a fresh replay from a trusted versioned JSON report
 togi replay 1 --report togi-report.json
+
+# After improving tests, verify that the same survivor is now killed
+togi replay 1 --report togi-report.json --verify-killed
 
 # GitHub annotations or HTML report
 togi check --format github
@@ -702,6 +736,8 @@ Baselines let existing weak spots stay visible without blocking every PR. New re
 
 Schemata are enabled by default. They batch compatible mutations into one build and switch mutants at runtime with `TOGI_MUTANT`. The runner currently supports expression-safe mutations in runtime contexts for Go, Rust, Java, C, and C++; unsupported languages, unsupported operators, and compile-time contexts automatically fall back to the regular one-mutant-at-a-time runner. Use `--no-schemata` or `schemata = false` to force regular execution.
 
+Before reporting a schemata survivor, Togi confirms the concrete edit with a fresh, regular run of its full test route. This also applies to cached schemata survivors: confirmation consumes one tested-mutant slot and records a direct replay recipe in a source-validated JSON report. Killed schemata mutants keep the fast path; they do not gain a direct replay recipe.
+
 ## Coverage and test selection
 
 For large repos, togi can avoid work before the runner starts and can also
@@ -775,15 +811,17 @@ Duration: 1.59s
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-Each surviving mutation reveals a concrete test gap:
+Most survivors here expose test gaps, but one is equivalent:
 
 - **`false_to_true` at line 13** — `TestIsPositive` never checks `IsPositive(0)` or negative inputs
-- **`gt_to_gte` at line 18** — `TestMax` only tests `Max(3,5)`, never the `a > b` path
-- **`return_empty` at line 19** — same: `Max` return value never verified for first-arg-wins
+- **`gt_to_gte` at line 18** — equivalent: when `a == b`, either branch returns the same integer. No test can distinguish this edit.
+- **`return_empty` at line 19** — `Max` return value never verified for first-arg-wins; add an assertion such as `Max(5,3) == 5`
 - **`zero_to_one` at line 26** — `TestAbs` is entirely missing
 - **`return_empty` at line 29** — `Abs` return value never tested
 
-Run it yourself: `cargo test -- --ignored` (requires Go).
+For a runnable find-and-repair walkthrough, see [Try a complete test repair](#try-a-complete-test-repair).
+
+To close a genuine gap, save a JSON report, replay its survivor, then add a test and run `togi replay <id> --report togi-report.json --verify-killed`. Verification succeeds only if the unmutated build/test route passes and a fresh direct run kills that exact mutant, using two isolated copies of the same input snapshot. Ordinary replay still checks the historical outcome and Git HEAD. Verification allows committed or uncommitted test changes at a different HEAD, but the entire target source file must remain unchanged (including any inline tests). It proves the snapshotted suite rejects the mutant, not that only tests changed or that the suite is non-flaky. Both modes use the report's stored commands and leave the report and Togi cache/history unchanged.
 
 ## Supported languages
 
@@ -993,9 +1031,9 @@ jobs:
       - name: Install project test dependencies
         run: npm ci
       - id: togi
-        uses: Darkroom4364/togi@e692e2d169b7a717c6b911884e90c0bcd0d133b1 # v0.5.2
+        uses: Darkroom4364/togi@10970abd97c0d13d8e0ee4b0c568552ebcf84720 # v0.6.0
         with:
-          version: v0.5.2
+          version: v0.6.0
           base: origin/${{ github.base_ref }}
           test-cmd: npm test
           format: json
@@ -1023,10 +1061,10 @@ using another runner or architecture.
 `fetch-depth: 0` makes the PR base available for
 `origin/${{ github.base_ref }}`. The checkout therefore needs a Git history
 that contains the base branch and a project with changed supported source
-lines. The Action source commit and downloaded binary version are both pinned to
-the immutable version identifiers for v0.5.2: its release commit and `v0.5.2`
-release tag. When upgrading, update both together to a reviewed release commit
-and immutable version tag.
+lines. The Action source is pinned to the v0.6.0 release commit, and
+`version: v0.6.0` selects its checksum-verified release archive. The source SHA
+does not independently pin archive bytes. When upgrading, update the source
+commit and release version together.
 
 The Action passes `--base`, `--timeout`, `--format`, and `--test-cmd` only for
 non-empty inputs. Those inputs override `togi.toml`; remove `test-cmd` to use
@@ -1045,10 +1083,10 @@ base = "origin/main"
 command = ["npm", "test"]
 ```
 
-`format: json` is the one-run path: its JSON stream becomes the replayable
-`togi-report.json`. To opt into GitHub annotations instead, set
-`format: github`; the Action preserves that review run and performs a second
-full JSON mutation run to create the replayable report.
+`format: json` prints the campaign's JSON report. For GitHub annotations, set
+`format: github`. In either case, the Action runs one mutation campaign and
+writes `togi-report.json` using `--json-report`; the review output and saved
+report describe the same execution.
 
 For a normal mutation report, the Action uploads `togi-report.json` as the
 `togi-report` artifact. This example explicitly retains it for 14 days. Set a

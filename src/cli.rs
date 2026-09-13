@@ -229,6 +229,11 @@ pub enum Commands {
         /// Show captured test output from the fresh replay
         #[arg(long)]
         show_output: bool,
+
+        /// Verify a recorded survivor is now killed, after checking the unmutated suite passes.
+        /// Allows a different Git HEAD, but the target source file must still match the report.
+        #[arg(long)]
+        verify_killed: bool,
     },
     /// List all available mutation operators
     ListOperators,

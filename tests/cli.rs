@@ -5111,7 +5111,10 @@ fn github_action_report_replays_a_direct_mutation() {
         .arg(helper)
         .current_dir(repo.path())
         .env("TOGI_BIN", assert_cmd::cargo::cargo_bin("togi"))
-        .env("TOGI_EXPECTED_VERSION", "v0.5.2")
+        .env(
+            "TOGI_EXPECTED_VERSION",
+            concat!("v", env!("CARGO_PKG_VERSION")),
+        )
         .env("RUNNER_TEMP", report_dir.path())
         .env("GITHUB_OUTPUT", &github_output)
         .env("TOGI_BASE", "HEAD")
@@ -5369,7 +5372,7 @@ fn github_action_inputs_have_no_baked_in_defaults() {
     }
 
     for (name, default) in [
-        ("version", "'v0.5.2'"),
+        ("version", "'v0.6.0'"),
         ("upload-report", "'true'"),
         ("report-retention-days", "'14'"),
         ("report-artifact-name", "'togi-report'"),
@@ -5398,7 +5401,7 @@ fn github_action_inputs_have_no_baked_in_defaults() {
         "Action releases must not resolve a mutable version"
     );
     for expected in [
-        "VERSION=\"${TOGI_VERSION_INPUT:-v0.5.2}\"",
+        "VERSION=\"${TOGI_VERSION_INPUT:-v0.6.0}\"",
         "^v[0-9]+[.][0-9]+[.][0-9]+$",
         "resolve-togi-asset.sh",
         "fetch-togi-release-asset.sh",
@@ -5504,8 +5507,8 @@ fn github_action_guide_and_advisory_pin_released_contract() {
         "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0",
         "node-version: 24 # Choose the version required by this repository.",
         "name: Install project test dependencies\n        run: npm ci",
-        "Darkroom4364/togi@e692e2d169b7a717c6b911884e90c0bcd0d133b1 # v0.5.2",
-        "version: v0.5.2",
+        "Darkroom4364/togi@10970abd97c0d13d8e0ee4b0c568552ebcf84720 # v0.6.0",
+        "version: v0.6.0",
         "base: origin/${{ github.base_ref }}",
         "test-cmd: npm test",
         "format: json",
@@ -5541,7 +5544,7 @@ fn github_action_guide_and_advisory_pin_released_contract() {
         ),
         (
             "run: npm ci",
-            "Darkroom4364/togi@e692e2d169b7a717c6b911884e90c0bcd0d133b1",
+            "Darkroom4364/togi@10970abd97c0d13d8e0ee4b0c568552ebcf84720",
         ),
     ] {
         assert!(
@@ -5552,10 +5555,11 @@ fn github_action_guide_and_advisory_pin_released_contract() {
 
     for expected in [
         "Those inputs override `togi.toml`",
-        "`format: github`; the Action preserves that review run and performs a second\nfull JSON mutation run",
+        "the Action runs one mutation campaign",
+        "`togi-report.json` using `--json-report`",
         "A failed baseline test or build is a fatal exit `2`",
         "Never use `pull_request_target` to run PR code.",
-        "immutable version identifiers for v0.5.2",
+        "does not independently pin archive bytes.",
     ] {
         assert!(
             readme.contains(expected),
@@ -5592,7 +5596,7 @@ fn github_action_guide_and_advisory_pin_released_contract() {
 }
 
 #[test]
-fn github_release_install_guide_documents_v0_5_2_contract() {
+fn github_release_install_guide_documents_released_contract() {
     let readme = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"))
         .unwrap()
         .replace("\r\n", "\n");
@@ -5606,7 +5610,7 @@ fn github_release_install_guide_documents_v0_5_2_contract() {
 
     for expected in [
         "GitHub Releases are the supported binary-install path.",
-        "TOGI_VERSION=v0.5.2",
+        "TOGI_VERSION=v0.6.0",
         "TOGI_ARCHIVE=togi-linux-x86_64.tar.gz",
         "https://github.com/Darkroom4364/togi/releases/download/${TOGI_VERSION}",
         "curl -fsSLo \"$TOGI_ARCHIVE\"",
@@ -5623,8 +5627,8 @@ fn github_release_install_guide_documents_v0_5_2_contract() {
         );
     }
     assert!(
-        !install.contains("TOGI_VERSION=v0.4.1"),
-        "Install section must not point the release archive at v0.4.1"
+        !install.contains("TOGI_VERSION=v0.5.2"),
+        "Install section must not point the release archive at v0.5.2"
     );
     assert!(
         !install.contains("cargo install togi"),
@@ -6803,6 +6807,13 @@ fn released_binary_smoke_stages_complete_go_fixture() {
     let bin_dir = dir.path().join("bin");
     fs::create_dir_all(&bin_dir).unwrap();
     write_fake_curl(&bin_dir);
+    let cargo = bin_dir.join("cargo");
+    fs::write(
+        &cargo,
+        "#!/usr/bin/env bash\necho 'release smoke must not rebuild togi' >&2\nexit 97\n",
+    )
+    .unwrap();
+    chmod_executable(&cargo);
     let mut paths = vec![bin_dir];
     paths.extend(
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
@@ -6839,6 +6850,14 @@ fn released_binary_smoke_stages_complete_go_fixture() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for expected in [
+        "SURVIVED: IsPositive(0) changes from false to true;",
+        "Unchanged weak tests: repair correctly rejected.",
+        "Demo complete: the added test kills the recorded boundary mutation.",
+    ] {
+        assert!(stdout.contains(expected), "missing {expected:?}: {stdout}");
+    }
 }
 
 #[test]

@@ -98,10 +98,15 @@ fn main() {
             mutant_id,
             report,
             show_output,
+            verify_killed,
         } => {
-            if let Err(e) =
-                togi::replay::replay_mutation(mutant_id, &report, show_output, cancelled.as_ref())
-            {
+            if let Err(e) = togi::replay::replay_mutation(
+                mutant_id,
+                &report,
+                show_output,
+                verify_killed,
+                cancelled.as_ref(),
+            ) {
                 eprintln!("Error: {e:#}");
                 process::exit(2);
             }

@@ -333,11 +333,15 @@ pub fn replay_mutation(
     mutant_id: u32,
     report_path: &Path,
     show_output: bool,
+    verify_killed: bool,
     cancelled: &AtomicBool,
 ) -> anyhow::Result<()> {
     let validated = validate_report_mutation(read_v1_report(report_path)?, mutant_id)?;
+    if verify_killed && validated.expected != MutationResult::Survived {
+        anyhow::bail!("--verify-killed requires a recorded survivor");
+    }
     let project_root = current_project_root()?;
-    validate_project_and_source(&project_root, &validated)?;
+    let current_revision = validate_project_and_source(&project_root, &validated, verify_killed)?;
 
     let build_command =
         replay_build_command(&validated.recipe, crate::config::AUTO_GO_COMPILE_OUTPUT);
@@ -346,7 +350,12 @@ pub fn replay_mutation(
         .map(serde_json::to_string)
         .transpose()?;
 
-    let fresh = crate::runner::run_replay_mutation(
+    let run = if verify_killed {
+        crate::runner::run_repair_verification
+    } else {
+        crate::runner::run_replay_mutation
+    };
+    let fresh = run(
         &project_root,
         &validated.mutation,
         crate::runner::ReplayRunConfig {
@@ -360,7 +369,7 @@ pub fn replay_mutation(
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             respect_workspace_ignores: validated.recipe.respect_workspace_ignores,
-            source_revision: &validated.source_revision,
+            source_revision: &current_revision,
             source_fingerprint: &validated.source_fingerprint,
             show_output,
             cancelled,
@@ -371,6 +380,13 @@ pub fn replay_mutation(
     }
 
     println!("Replay mutation #{mutant_id}");
+    if verify_killed {
+        println!(
+            "Verification: current unmutated suite passed; checking the recorded survivor is killed."
+        );
+        println!("Report Git HEAD: {}", validated.source_revision);
+        println!("Current Git HEAD: {current_revision} (including working-tree changes)");
+    }
     println!(
         "Expected historical result: {}",
         result_name(validated.expected)
@@ -396,7 +412,15 @@ pub fn replay_mutation(
         }
     }
 
-    if fresh.result != validated.expected {
+    if verify_killed {
+        if fresh.result != MutationResult::Killed {
+            anyhow::bail!(
+                "repair not verified: expected killed, fresh execution returned {}",
+                result_name(fresh.result)
+            );
+        }
+        println!("Verified: the current suite kills mutation #{mutant_id}.");
+    } else if fresh.result != validated.expected {
         anyhow::bail!(
             "replay divergence: report expected {}, fresh execution returned {}",
             result_name(validated.expected),
@@ -603,9 +627,10 @@ fn current_project_root() -> anyhow::Result<PathBuf> {
 fn validate_project_and_source(
     project_root: &Path,
     replay: &ValidatedReplay,
-) -> anyhow::Result<()> {
+    allow_changed_revision: bool,
+) -> anyhow::Result<String> {
     let current_revision = git_head(project_root)?;
-    if current_revision != replay.source_revision {
+    if !allow_changed_revision && current_revision != replay.source_revision {
         anyhow::bail!(
             "report Git HEAD {} does not match current Git HEAD {}",
             replay.source_revision,
@@ -655,7 +680,7 @@ fn validate_project_and_source(
     ) {
         anyhow::bail!("report mutation byte range and original bytes do not match target source");
     }
-    Ok(())
+    Ok(current_revision)
 }
 
 fn read_replay_source(path: &Path) -> std::io::Result<Vec<u8>> {
@@ -883,7 +908,7 @@ mod tests {
         replay.source_fingerprint = source_fingerprint(b"x");
 
         reset_replay_source_read_count();
-        let error = validate_project_and_source(root, &replay).unwrap_err();
+        let error = validate_project_and_source(root, &replay, false).unwrap_err();
         assert!(
             error
                 .to_string()
@@ -894,7 +919,7 @@ mod tests {
         std::fs::remove_file(root.join("alias"))?;
         std::fs::hard_link(&cached_source, root.join("alias"))?;
         reset_replay_source_read_count();
-        let error = validate_project_and_source(root, &replay).unwrap_err();
+        let error = validate_project_and_source(root, &replay, false).unwrap_err();
         assert!(
             error.to_string().contains("multiple hard links"),
             "{error:#}"

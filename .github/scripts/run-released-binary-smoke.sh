@@ -102,3 +102,6 @@ if grep -q '^Partial:' "$run_output"; then
   exit 1
 fi
 git -C "$project_root" diff --exit-code
+
+# Prove the full repair loop with the installed archive, without a source build.
+TOGI_BIN="${install_dir}/togi" bash "${GITHUB_WORKSPACE}/examples/demo.sh"
