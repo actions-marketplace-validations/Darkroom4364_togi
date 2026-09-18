@@ -28,8 +28,7 @@ pub fn print(report: &CoverageGateReport, format: OutputFormat) -> Result<()> {
         OutputFormat::Json => print_json(report)?,
         OutputFormat::Github => print_github(report),
         OutputFormat::Html => write_html(report, Path::new("togi-coverage-report.html"))?,
-        // SARIF reports surviving mutants, not coverage gates; keep the gate readable.
-        OutputFormat::Sarif => print_terminal(report),
+        OutputFormat::Sarif => super::sarif::print_coverage_gate_report(report)?,
         OutputFormat::Terminal => print_terminal(report),
     }
     Ok(())

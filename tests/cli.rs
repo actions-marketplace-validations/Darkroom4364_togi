@@ -862,6 +862,114 @@ fn setup_two_line_mutation_repo() -> TempDir {
     dir
 }
 
+fn coverage_gate_sarif(scope_args: &[&str], gate_args: &[&str]) -> serde_json::Value {
+    let dir = setup_git_repo();
+    fs::write(
+        dir.path().join("lcov.info"),
+        "SF:main.go\nDA:4,1\nDA:5,0\nDA:6,0\nend_of_record\n",
+    )
+    .unwrap();
+    let output = togi()
+        .args([
+            "check",
+            "--format",
+            "sarif",
+            "--coverage-file",
+            "lcov.info",
+            "--test-cmd",
+            "togi-coverage-gate-must-not-run-tests",
+        ])
+        .args(scope_args)
+        .args(gate_args)
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("Running"));
+    assert!(!dir.path().join(".togi-cache").exists());
+    let sarif: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid SARIF: {error}\n{output:?}"));
+    assert_eq!(
+        sarif["$schema"],
+        "https://json.schemastore.org/sarif-2.1.0.json"
+    );
+    assert_eq!(sarif["version"], "2.1.0");
+    assert_eq!(sarif["runs"].as_array().unwrap().len(), 1);
+    assert_eq!(sarif["runs"][0]["tool"]["driver"]["name"], "togi");
+    for result in sarif["runs"][0]["results"].as_array().unwrap() {
+        assert_eq!(result["level"], "error");
+        assert!(
+            result["message"]["text"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty())
+        );
+        assert!(
+            sarif["runs"][0]["tool"]["driver"]["rules"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|rule| rule["id"] == result["ruleId"])
+        );
+    }
+    sarif
+}
+
+#[test]
+fn check_coverage_gate_sarif_line_threshold() {
+    let sarif = coverage_gate_sarif(&["--base", "HEAD"], &["--min-line-coverage", "80"]);
+    let results = sarif["runs"][0]["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["ruleId"], "togi.coverage.line-threshold");
+    assert_eq!(results[0]["properties"]["threshold"], 80.0);
+    assert_eq!(results[0]["properties"]["covered"], 1);
+    assert_eq!(results[0]["properties"]["total"], 3);
+}
+
+#[test]
+fn check_coverage_gate_sarif_diff_threshold() {
+    let sarif = coverage_gate_sarif(&["--base", "HEAD"], &["--min-diff-coverage", "80"]);
+    let results = sarif["runs"][0]["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["ruleId"], "togi.coverage.diff-threshold");
+    assert_eq!(results[0]["properties"]["threshold"], 80.0);
+    assert_eq!(results[0]["properties"]["covered"], 1);
+    assert_eq!(results[0]["properties"]["total"], 3);
+}
+
+#[test]
+fn check_coverage_gate_sarif_uncovered_lines_excludes_passing_thresholds() {
+    let sarif = coverage_gate_sarif(
+        &["--base", "HEAD"],
+        &[
+            "--min-line-coverage",
+            "0",
+            "--min-diff-coverage",
+            "0",
+            "--fail-on-uncovered-diff",
+        ],
+    );
+    let results = sarif["runs"][0]["results"].as_array().unwrap();
+    assert_eq!(results.len(), 2);
+    for (result, line) in results.iter().zip([5, 6]) {
+        assert_eq!(result["ruleId"], "togi.coverage.uncovered-changed-line");
+        assert_eq!(result["properties"]["uncovered_count"], 1);
+        assert_eq!(result["locations"].as_array().unwrap().len(), 1);
+        let location = &result["locations"][0]["physicalLocation"];
+        assert_eq!(location["artifactLocation"]["uri"], "main.go");
+        assert_eq!(location["region"]["startLine"], line);
+    }
+}
+
+#[test]
+fn check_coverage_gate_sarif_all_has_no_stdout_banner() {
+    let sarif = coverage_gate_sarif(&["--all"], &["--min-line-coverage", "80"]);
+    assert_eq!(sarif["runs"][0]["results"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        sarif["runs"][0]["results"][0]["ruleId"],
+        "togi.coverage.line-threshold"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn check_classifies_zero_coverage_mutants_as_uncovered() {

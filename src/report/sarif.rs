@@ -253,6 +253,123 @@ pub fn print_report(report: &MutationReport) -> Result<()> {
     print_report_with_baseline(report, None)
 }
 
+pub(super) fn print_coverage_gate_report(
+    report: &crate::coverage::CoverageGateReport,
+) -> Result<()> {
+    println!("{}", coverage_gate_to_sarif_string(report)?);
+    Ok(())
+}
+
+/// Coverage gates run before mutation generation; do not represent their
+/// failures as surviving mutants or invent mutation execution totals.
+fn coverage_gate_to_sarif_string(report: &crate::coverage::CoverageGateReport) -> Result<String> {
+    use serde_json::json;
+
+    let mut rules = Vec::new();
+    let mut results = Vec::new();
+    for (id, label, metric) in [
+        (
+            "togi.coverage.line-threshold",
+            "Overall line coverage",
+            &report.line_coverage,
+        ),
+        (
+            "togi.coverage.diff-threshold",
+            "Changed-line coverage",
+            &report.diff_coverage,
+        ),
+    ] {
+        if metric.meets_threshold() {
+            continue;
+        }
+        rules.push(SarifRule {
+            id: id.into(),
+            short_description: SarifMessage {
+                text: format!("{label} below threshold"),
+            },
+        });
+        results.push(json!({
+            "ruleId": id,
+            "level": "error",
+            "message": { "text": format!(
+                "{label}: {:.1}% ({}/{}) is below the {:.1}% threshold.",
+                metric.percent(), metric.covered, metric.total,
+                metric.threshold.expect("a failed metric has a threshold"),
+            ) },
+            "properties": metric,
+        }));
+    }
+    if report.fail_on_uncovered_diff {
+        let id = "togi.coverage.uncovered-changed-line";
+        for file in &report.uncovered_changed_lines {
+            for line in &file.lines {
+                results.push(json!({
+                    "ruleId": id,
+                    "level": "error",
+                    "message": { "text": "Changed line is not covered by tests." },
+                    "properties": { "uncovered_count": 1 },
+                    "locations": [{ "physicalLocation": {
+                        "artifactLocation": { "uri": coverage_artifact_uri(&file.file) },
+                        "region": { "startLine": line },
+                    } }],
+                }));
+            }
+        }
+        if report
+            .uncovered_changed_lines
+            .iter()
+            .any(|file| !file.lines.is_empty())
+        {
+            rules.push(SarifRule {
+                id: id.into(),
+                short_description: SarifMessage {
+                    text: "Uncovered changed line".into(),
+                },
+            });
+        }
+    }
+    let tool = SarifTool {
+        driver: SarifDriver {
+            name: "togi",
+            version: env!("CARGO_PKG_VERSION"),
+            information_uri: INFORMATION_URI,
+            rules,
+        },
+    };
+    Ok(serde_json::to_string_pretty(&json!({
+        "$schema": SARIF_SCHEMA,
+        "version": SARIF_VERSION,
+        "runs": [{ "tool": tool, "results": results }],
+    }))?)
+}
+
+fn coverage_artifact_uri(file: &std::path::Path) -> String {
+    use std::fmt::Write;
+
+    #[cfg(unix)]
+    let path = {
+        use std::os::unix::ffi::OsStrExt;
+        file.as_os_str().as_bytes()
+    };
+    #[cfg(not(unix))]
+    let normalized = file
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    #[cfg(not(unix))]
+    let path = normalized.as_bytes();
+
+    let mut uri = String::new();
+    for &byte in path {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                uri.push(byte as char);
+            }
+            _ => write!(uri, "%{byte:02X}").unwrap(),
+        }
+    }
+    uri
+}
+
 pub fn print_report_with_baseline(
     report: &MutationReport,
     comparison: Option<&crate::baseline::SurvivorBaselineComparison>,
@@ -361,6 +478,89 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::time::Duration;
+
+    fn coverage_report() -> crate::coverage::CoverageGateReport {
+        crate::coverage::CoverageGateReport {
+            line_coverage: crate::coverage::CoverageMetric {
+                covered: 1,
+                total: 2,
+                threshold: Some(80.0),
+            },
+            diff_coverage: crate::coverage::CoverageMetric {
+                covered: 1,
+                total: 2,
+                threshold: Some(90.0),
+            },
+            uncovered_changed_lines: vec![crate::coverage::CoverageUncoveredFile {
+                file: PathBuf::from("src").join("gap #é%.go"),
+                lines: vec![7, 9],
+            }],
+            fail_on_uncovered_diff: true,
+        }
+    }
+
+    #[test]
+    fn coverage_gate_sarif_combines_failures_and_encodes_locations() {
+        let value: Value =
+            serde_json::from_str(&coverage_gate_to_sarif_string(&coverage_report()).unwrap())
+                .unwrap();
+        let run = &value["runs"][0];
+        assert_eq!(run["tool"]["driver"]["rules"].as_array().unwrap().len(), 3);
+        let results = run["results"].as_array().unwrap();
+        assert_eq!(results.len(), 4);
+        assert_eq!(results[0]["ruleId"], "togi.coverage.line-threshold");
+        assert_eq!(results[1]["ruleId"], "togi.coverage.diff-threshold");
+        for (result, line) in results[2..].iter().zip([7, 9]) {
+            assert_eq!(result["ruleId"], "togi.coverage.uncovered-changed-line");
+            assert_eq!(result["properties"]["uncovered_count"], 1);
+            let location = &result["locations"][0]["physicalLocation"];
+            assert_eq!(
+                location["artifactLocation"]["uri"],
+                "src/gap%20%23%C3%A9%25.go"
+            );
+            assert_eq!(location["region"]["startLine"], line);
+        }
+        assert!(
+            run.get("invocations").is_none(),
+            "no mutation totals before a campaign"
+        );
+    }
+
+    #[test]
+    fn coverage_gate_sarif_omits_disabled_or_met_thresholds() {
+        let mut report = coverage_report();
+        report.fail_on_uncovered_diff = false;
+        for threshold in [None, Some(50.0)] {
+            report.line_coverage.threshold = threshold;
+            report.diff_coverage.threshold = threshold;
+            let value: Value =
+                serde_json::from_str(&coverage_gate_to_sarif_string(&report).unwrap()).unwrap();
+            assert!(value["runs"][0]["results"].as_array().unwrap().is_empty());
+            assert!(
+                value["runs"][0]["tool"]["driver"]["rules"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn coverage_gate_sarif_preserves_non_utf8_path_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let mut report = coverage_report();
+        report.uncovered_changed_lines[0].file =
+            PathBuf::from(std::ffi::OsStr::from_bytes(b"src/gap-\xff.go"));
+        let value: Value =
+            serde_json::from_str(&coverage_gate_to_sarif_string(&report).unwrap()).unwrap();
+        assert_eq!(
+            value["runs"][0]["results"][2]["locations"][0]["physicalLocation"]["artifactLocation"]
+                ["uri"],
+            "src/gap-%FF.go"
+        );
+    }
 
     fn mutation(id: u32, file: &str, line: usize, operator: &str, description: &str) -> Mutation {
         Mutation {

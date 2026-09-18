@@ -295,8 +295,7 @@ pub fn print_coverage_gate_report(
             coverage::write_html(report, path)?;
             eprintln!("HTML coverage report written to {}", path.display());
         }
-        // SARIF reports surviving mutants, not coverage gates; keep the gate readable.
-        OutputFormat::Sarif => coverage::print_terminal(report),
+        OutputFormat::Sarif => sarif::print_coverage_gate_report(report)?,
         OutputFormat::Terminal => coverage::print_terminal(report),
     }
     Ok(())
